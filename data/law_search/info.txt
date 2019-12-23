@@ -1,0 +1,12 @@
+Selected results from the 2016 Global Climate Legislation Database
+
+Created: 24 Nov 2019
+Source: http://www.lse.ac.uk//GranthamInstitute/climate-change-laws-of-the-world/?region=all&country=all&fromyear=all&toyear=all&emitter=all&income=all&framework=all&execleg=all&category=all&document=all&type=law
+
+Data file: data.csv
+Data descriptor: datapackage.json
+Data descriptor (alt): info.txt
+Data Fields: Country, Name, Year Passed, Executive/Legislative, Framework, Categories, Document Type
+
+Terms of use: This authors encourage the use of this legislation database. Users are welcome to download, save, or distribute the results electronically or in any other format, without written permission of the authors. Please reference the source as the Grantham Research Institute, London School of Economics, Global Climate Legislation database, http://www.lse.ac.uk/GranthamInstitute/Legislation/
+

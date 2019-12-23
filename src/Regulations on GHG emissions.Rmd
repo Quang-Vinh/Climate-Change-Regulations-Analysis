@@ -1,0 +1,540 @@
+---
+title: "Regulations on GHG emissions"
+subtitle: ''
+author: "Quang-Vinh Do"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    code_folding: hide
+    toc: True
+    toc_float: True
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+
+# Set some options
+knitr::opts_chunk$set(echo = FALSE, fig.height = 8, fig.width = 10)
+skimr::skim_with(numeric = list(hist = NULL))
+
+# load libraries
+library(countrycode)
+library(ggrepel)
+library(fable)
+library(feasts)
+library(forecast)
+library(ggthemes)
+library(janitor)
+library(lmtest)
+library(lubridate)
+library(plotly)
+library(plyr)
+library(skimr)
+library(tidyverse)
+library(tsibble)
+library(viridis)
+```
+
+# Purpose
+
+Do regulations have any effect in reducing the amount of GHG emissions?
+
+
+# Who are the biggest producers of GHG
+
+We can start with a high level view and plot the ghg emissions per country to determine if certain areas have much higher amounts of emissions compared to others and to get a basic sense of which countries pollute the most.
+
+```{r, warning=FALSE, message=FALSE}
+# Load green house emissions data
+country_ghg_emissions <- 
+  read_csv('../data/CAIT Country GHG Emissions/CAIT Country GHG Emissions.csv', skip=2) %>% 
+  clean_names() %>% 
+  select(country, year, total_ghg_emissions_mtco2e = total_ghg_emissions_including_land_use_change_and_forestry_mt_co_e) %>% 
+  filter(country != 'World', !str_detect(country, 'European Union')) %>%  # Remove as they are not countries
+  na.omit()
+
+year_range <- country_ghg_emissions %>% 
+  summarise(min_year = min(year), max_year = max(year))
+
+# List of countries that will be omitted from analysis. They do not contain data from full year ranges 1990-2014
+country_omit <- 
+  country_ghg_emissions %>%
+  group_by(country) %>% 
+  summarise(max_year=max(year), min_year=min(year)) %>% 
+  filter(max_year != year_range$max_year |
+        min_year != year_range$min_year)
+
+# Remove from df the omitted countries
+country_ghg_emissions <- country_ghg_emissions %>% 
+  filter(!(country %in% country_omit$country))
+
+# Total emissions per country
+country_total_ghg_emissions <- country_ghg_emissions %>% 
+  group_by(country) %>% 
+  summarise(total_ghg_emissions_mtco2e = sum(total_ghg_emissions_mtco2e))
+
+
+world_data <- map_data('world') %>% 
+  filter(region != 'Antarctica') %>% 
+  mutate(region = countrycode(region, 'iso3c', 'country.name.en', nomatch=NULL))  # Replace 3 letter codes with full name
+
+# Manually map the countries together that have different namings in both data sets
+country_mappings <-
+  tribble(
+    ~world_data, ~country_emissions,
+    'North Korea', 'Korea (North)',
+    'South Korea', 'Korea (South)', 
+    'Russia', 'Russian Federation',
+    'UK', 'United Kingdom',
+    'Ivory Coast', "Cote d'Ivoire",
+    'Democratic Republic of the Congo', 'Congo, Dem. Republic',
+    'Republic of Congo', 'Congo',
+    'Antigua', 'Antigua & Barbuda',
+    'Barbuda', 'Antigua & Barbuda',
+    'Bahamas', 'Bahamas, The',
+    'Bosnia and Herzegovina', 'Bosnia & Herzegovina',
+    'Gambia', 'Gambia, The',
+    'Trinidad', 'Trinidad & Tobago',
+    'Tobago', 'Trinidad & Tobago',
+    'Macedonia', 'Macedonia, FYR',
+    'Saint Kitts', 'Saint Kitts & Nevis',
+    'Nevis', 'Saint Kitts & Nevis',
+    'Saint Vincent', 'Saint Vincent & Grenadines',
+    'Grenadines', 'Saint Vincent & Grenadines',
+    'Sao Tome and Principe', 'Same Tome & Principe',
+    'United States', 'United States of America'
+  )
+
+world_emission_data <- world_data %>% 
+  mutate(region = mapvalues(region, country_mappings$world_data, country_mappings$country_emissions)) %>% 
+  inner_join(country_total_ghg_emissions, by=c('region'='country')) %>% 
+  select(long, lat, group, region, total_ghg_emissions_mtco2e) %>% 
+  na.omit()
+
+ggplot() +
+  geom_polygon(data=world_data, aes(x=long, y=lat, group=group), fill='white', colour='grey', size=0.01) +
+  coord_equal() +
+  geom_polygon(data=world_emission_data, aes(x=long, y=lat, group=group, fill=total_ghg_emissions_mtco2e)) +
+  scale_fill_viridis(name = 'Total GHG emissions (mtco2e)') +
+  labs(
+    title = 'Total GHG emissions',
+    subtitle = paste0(year_range$min_year, '-', year_range$max_year)
+  ) +
+  theme(
+    legend.position = 'bottom'
+  ) +
+  theme_map()
+```
+
+China and US have are by far the greatest GHG emitters. Next, we see Brazil, Russia, India, Japan, and others with noticeable amounts of GHG emissions. The other countries seem to have much lower amounts of emissions, however it looks like overall the more developed countries are emitting more.
+
+We will limit our analysis to the countries with the highest total GHG emissions. We decided that it would be more insightful to analyze this subset of countries as they have the most impact on climate change. For our subset, we chose the top countries making up 80% of the global GHG emissions.
+
+
+``` {r, message=FALSE, warning=FALSE}
+# View only top n percent countries based on ghg emissions
+percent_cutoff <- 0.80
+country_top_total_emissions <- country_total_ghg_emissions %>% 
+  arrange(total_ghg_emissions_mtco2e %>% desc()) %>%
+  mutate(cum_percent_ghg = cumsum(total_ghg_emissions_mtco2e)/sum(total_ghg_emissions_mtco2e),
+         percent_global_ghg_emissions = total_ghg_emissions_mtco2e / sum(total_ghg_emissions_mtco2e)) %>% 
+  filter(cum_percent_ghg < percent_cutoff) %>% 
+  select(-cum_percent_ghg)
+
+# Barplot of top 80% countries avg ghg emission
+country_top_total_emissions %>% 
+  ggplot(aes(reorder(country, total_ghg_emissions_mtco2e), total_ghg_emissions_mtco2e)) +
+  geom_bar(stat='identity') +
+  geom_col(position = 'dodge') +
+  geom_text(aes(label = paste0(round(percent_global_ghg_emissions*100, digits=2), '%')), hjust = -0.2, size = 3) +
+  coord_flip() + 
+  labs(
+    title = paste0('Total GHG emissions of countries making up ', percent_cutoff*100, '% of global GHG emission'),
+    subtitle = (paste0(year_range$min_year, '-', year_range$max_year)),
+    x = 'Country',
+    y = 'Total GHG emission (mtco2e)'
+  ) +
+  theme_minimal()
+
+```
+
+As shown in the above plot, there are 29 countries making up the top 80% of global emissions. US and China account for nearly 1/3 of global emissions at 31% while the other countries are more balanced in emissions.
+
+
+# Did the Kyoto Protocol have an effect on GHG emissions?
+
+Now that we have a subset of important countries to analyze, we want to determine if regulations have any impact on reducing GHG emissions. In particular, we will focus on the Kyoto Protocol which was an international treaty where parties are committed to reduce green house gas emissions. The Kyoto Protocol was effective as of February 16, 2005 and is currently ongoing for its second commitment period. We have manually checked on the United Nations Climate Change website that all 29 countries of interest were part of the protocol as of 2005 (as the data was not available for use). 
+
+Note that Canada withdrew in December 2012 however for this analysis we will examine the impact of the protocol being implemented as of 2005 and onward. As well, since the emission data is yearly we will assume that the emissions for year 2005 were under the Kyoto Protocol.
+
+
+## Global effect
+
+First let's see how the Kyoto Protocol effected the global GHG emissions.
+
+```{r, warning=FALSE, message=FALSE}
+# As all the data is yearly we will do our analysis in terms of years
+kyoto_protocol_effective_date <- c(start = ymd("2005-02-16"), end=ymd("2012-12-31"))
+kyoto_start_year <- 2005
+
+# Check worldwide effect
+world_ghg_emissions_ts <- country_ghg_emissions %>% 
+  group_by(year) %>% 
+  summarise(total_ghg_emissions_mtco2e = sum(total_ghg_emissions_mtco2e)) %>%
+  as_tsibble(index=year)
+
+world_ghg_emissions_ts %>% 
+  autoplot(total_ghg_emissions_mtco2e) +
+  geom_point() +
+  geom_vline(xintercept=kyoto_start_year, linetype='dashed', colour='blue') +
+  geom_text(aes(x=kyoto_start_year, y=max(total_ghg_emissions_mtco2e)), label='Kyoto Protocol adopted') +
+  labs(
+    title = paste0('World GHG emissions'),
+    subtitle = (paste0(year_range$min_year, '-', year_range$max_year)),
+    x = 'Year',
+    y = 'GHG emissions (mtco2e)'
+  ) +
+  theme_minimal()
+```
+
+Just from eyeballing the plot it doesn't look like the Kyoto Protocol had any impact on global GHG emissions as it seems to be climbing at the same rate as it was before the protocol. To confirm this, we will attempt to apply intervention analysis by modelling the time series as a regression with arima errors and determine if the coefficient is significant. The model is expressed as:
+
+$y_t = \beta_0 + \beta_1 x_t + \eta_t$ where $\eta'_t = \phi_1 \eta'_{t-1} + \varepsilon_t$   [1]
+
+$x_t$ is a vector of 0,1 where it's 0 if is before the Kyoto Protocol effective date and 1 if after.
+
+Note, this simply checks for constant changes to the mean value.
+
+With this definition we get the following regression with arima errors model
+```{r, message=FALSE, warning=FALSE}
+# Fit regression with arima errors with intervention variable
+arimaWithKyotoIntervention <- function(df_tsibble) {
+  z <- df_tsibble %>% 
+    transmute(z = year >= kyoto_start_year) %>% 
+    pull(z) %>%
+    as.numeric()
+  fit <- df_tsibble %>% auto.arima(xreg=z)
+  return (fit)
+}
+
+world_ghg_emissions_arima <- world_ghg_emissions_ts %>% arimaWithKyotoIntervention()
+
+# Plot fitted values. Looks pretty good
+world_ghg_emissions_arima$x %>%
+  autoplot(series='Actual') +
+  autolayer(world_ghg_emissions_arima$fitted, series='Fitted') +
+  geom_vline(xintercept=kyoto_start_year, linetype='dashed') +
+  geom_text(aes(x=kyoto_start_year, y=max(world_ghg_emissions_ts$total_ghg_emissions_mtco2e)), label='Kyoto Protocol adopted') +
+  labs(
+    title = 'Fitted values from ARIMA on World GHG emissions',
+    subtitle = (paste0(year_range$min_year, '-', year_range$max_year)),
+    x = 'Year',
+    y = 'GHG emissions (mtco2e)',
+    colour = 'Type'
+  ) +
+  theme_minimal()
+
+# Display arima model
+summary(world_ghg_emissions_arima)
+```
+
+The best model found using the AIC is a regression with errors ARIMA(2,0,0) meaning it's auto regressive only. It has fairly good performance metrics on the training set. Now we analyze residuals.
+
+```{r, message=FALSE, warning=FALSE}
+world_ghg_emissions_arima %>% checkresiduals()
+world_ghg_emissions_arima %>%
+  residuals(type='innovation') %>%
+  as_tsibble() %>%
+  ggplot(aes(sample=value)) +
+  stat_qq() + stat_qq_line() +
+  ggtitle('qq-plot of the residuals')
+```
+
+From the Ljung-Box test we get a p-value of 0.1408 which is fairly high so we can conclude that there's no autocorrelation between the errors. As well, the residuals seem to follow a normal distribution from the qq-plot shown and also seems like random noise which indicates that the model has captured the proper patterns. Thus, the regression model with arima errors does a good job of modelling the time series.
+
+```{r, message=FALSE, warning=FALSE}
+# Check p-values of coefficients
+coeftest(world_ghg_emissions_arima)
+```
+
+From the output above of the p-values for the parameters it shows that xreg is not significant at all with a very high p-value of 0.5867. Thus we can conclude since the xreg parameter was not significant, then it does not add much information for the model and that the period after the Kyoto Protocol start date was not much different from before. Therefore the Kyoto Protocol didn't have much impact on global GHG emissions!
+
+
+## Per country effect
+
+We suspect that this might not be true for certain countries. Some countries might have actually shown a significant change in their ghg emissions after the Kyoto Protocol. We will apply the same process as we did for World emissions but for our 29 countries of interest. Let's start by viewing the ghg emissions over time for all countries.
+
+```{r, message=FALSE, warning=FALSE}
+# GHG emissions for top 80% countries over time
+country_top_total_emissions_ts <-
+  country_top_total_emissions %>% 
+  select(country) %>% 
+  inner_join(country_ghg_emissions, by='country') %>%  
+  as_tsibble(key=country, index=year)
+
+# Plot emissions time series for each country
+p <- 
+  country_top_total_emissions_ts %>% 
+  mutate(country = fct_reorder(country, total_ghg_emissions_mtco2e, tail, n=1, .desc=TRUE)) %>% 
+  autoplot(total_ghg_emissions_mtco2e) +
+  geom_vline(xintercept=kyoto_start_year, linetype='dashed') +
+  geom_text(aes(x=kyoto_start_year, y=max(total_ghg_emissions_mtco2e)), 
+            label='Kyoto Protocol adopted', colour='black') +
+  labs(
+    title = paste0('Total GHG emissions of countries making up ', percent_cutoff*100, '% of global GHG emission excluding Canada',
+                   ' (', year_range$min_year, '-', year_range$max_year, ')'),
+    y = 'GHG emission (mtco2e)',
+    x = 'Year'
+  ) + 
+  theme_hc()
+ggplotly(p)
+```
+
+By eyeballing the plot, it does not seem like any single country's GHG emissions changed much after the Kyoto Protocol in 2005. We can determine the significance by modelling all the countries each with a regression with arima errors. As we are doing multiple hypothesis tests, we will have to be more careful and apply the Bonferroni correction using an an alpha of $0.05 / n$ where $n$ is the number of tests. Note, there is some controversy about this correction however it is simple for now.
+
+```{r, warning=FALSE, error=FALSE}
+# Create arima model per country
+countries <- country_top_total_emissions_ts %>% pull(country) %>% unique()
+countries_arima <- vector('list', length(countries))
+
+for (i in 1:length(countries)) {
+  country <- countries[[i]]
+  country_emissions_ts <- 
+    country_top_total_emissions_ts %>% 
+    filter(country == countries[i])
+  countries_arima[[country]] <- country_emissions_ts %>% arimaWithKyotoIntervention()
+}
+
+# Check for significant p-values
+alpha <- 0.05 / length(countries)
+
+countries_arima_significant <- vector('character')
+for (i in 1:length(countries)) {
+  country <- countries[[i]]
+  p_val <- coeftest(countries_arima[[country]])['xreg','Pr(>|z|)']
+  if (p_val < alpha) {
+    print(paste0(country, ' P-value: ', p_val))
+    countries_arima_significant <- c(countries_arima_significant, country)
+  }
+}
+```
+
+From the output Indonesia is the only country that had a significant p-value, in this case of 6.02e-09 which is extremely significant. Let's view its emissions overtime to see what was found.
+
+```{r, message=FALSE, warning=FALSE}
+p <- 
+  country_top_total_emissions_ts %>% 
+  filter(country %in% countries_arima_significant) %>% 
+  ggplot(aes(x=year, y=total_ghg_emissions_mtco2e, colour=country)) +
+  geom_line() +
+  geom_vline(xintercept=kyoto_start_year, linetype='dashed') +
+  geom_text(aes(x=kyoto_start_year, y=max(total_ghg_emissions_mtco2e)), 
+            label='Kyoto Protocol adopted', colour='black') +
+  labs(
+    title = paste0('GHG emissions of countries with significant p-values',
+                   ' (', year_range$min_year, '-', year_range$max_year, ')'),
+    y = 'GHG emission (mtco2e)',
+    x = 'Year'
+  ) + 
+  theme_hc()
+ggplotly(p)
+```
+
+Since 2005, Indonesia has had a major increase in its GHG emissions and so the Kyoto Protocol doesn't seem to have had an effect in reducing Indonesia's GHG emissions. And neither did it have an effect for any of the other 28 countries either as they had non-significant p-values. Therefore, we can conclude that even at the per country level the Kyoto Protocol doesn't seem to have had an impact in reducing GHG emissions. This confirms what we initially saw from the plot above as well.
+
+
+## Kyoto Protocol effects on regulations
+
+So even after the Kyoto Protocol was implemented there was no significant change in GHG emissions, but how active were countries in creating regulations relating to climate change after the Kyoto protocol was put into place?
+
+We can attempt to answer this question by simply viewing the number of regulations total that were put into place in between 2005-2019 and 1991-2005. We can compare the number of regulations created between Kyoto Protocol start until present date with between 1991 to Kyoto Protocol start. This gives 14 years on either sides pre/post protocol to compare with. For this analysis, we will include all countries.
+
+
+```{r, message=FALSE, warning=FALSE}
+regulations <- read_csv('../data/law_search/data.csv') %>% 
+  clean_names() %>% 
+  rename(year = year_passed) %>% 
+  mutate(categories = categories %>% 
+           str_to_lower() %>% 
+           str_split(';')) 
+
+# Analyze total number of regulations implemented after kyoto protocol between countries
+year_start <- kyoto_start_year - (max(regulations$year) - kyoto_start_year)
+
+regulations_compare <- regulations %>% 
+  filter(year >= year_start) %>% 
+  mutate(pre_kyoto = year < kyoto_start_year) %>% 
+  group_by(country, pre_kyoto) %>% 
+  summarise(number_regulations = n()) %>% 
+  mutate(pre_kyoto = ifelse(pre_kyoto, 'pre_kyoto', 'post_kyoto')) %>% 
+  pivot_wider(names_from=pre_kyoto, values_from=number_regulations) %>% 
+  mutate(pre_kyoto = replace_na(pre_kyoto, 0), 
+         post_kyoto = replace_na(post_kyoto, 0)) %>% 
+  ungroup()
+  
+# Plot difference in regulations post vs pre kyoto protocol
+regulations_compare %>% 
+  mutate(regulations_diff = post_kyoto - pre_kyoto) %>% 
+  mutate(country = fct_reorder(country, regulations_diff)) %>% 
+  ggplot(aes(x=regulations_diff)) +
+  geom_histogram(bins=30) +
+  geom_vline(xintercept=0, linetype='dashed') +
+  labs(
+    title = 'Difference in number of regulations created by countries before vs after the Kyoto Protocol',
+    subtitle = paste0('(', year_start, '-', kyoto_start_year, ') vs (',
+                      kyoto_start_year, '-', max(regulations$year), ')'),
+    x = 'Difference in number of regulations'
+  ) +
+  theme_minimal()
+```
+
+
+Looks like there have been many more regulations that have been created after 2005 than before 2005 for the same time ranges. Just to confirm we will do a paired t-test of difference of means
+
+```{r}
+t.test(x = regulations_compare$pre_kyoto, 
+       y = regulations_compare$post_kyoto,
+       alternative = 'less',
+       paired = TRUE,
+       var.equal = FALSE)
+```
+
+As expected from just viewing the data, the p-value is extremely low of 2.2e-16 so we reject the null and we can say the means are significantly different from each other. This allows us to conclude that yes from 2005-2019 there have been more regulations than in 1991-2005 created by countries indicating that they are more active in climate change prevention, however we cannot necessarily conclude that it was due to the Kyoto Protocol. Note, we did not take into account the types or impacts of each individual regulation.
+
+
+# Conclusion
+
+Overall, no the Kyoto Protocol did not have any significant impact on the reduction of GHG emissions however countries have been more active in creating regulations concerning climate change since the Kyoto Protocol was initiated, whether it was due to the Kyoto Protocol or not. So even though countries have been more active, it doesn't show in the GHG emissions. This could be due to either regulations aren't strict enough or perhaps targeted parties, or industries aren't following the regulations, or even that the regulations aren't targeting the biggest causes of GHG emissions. However, regardless of the reason we can definitely conclude that there needs to be more effort in order to reduce GHG emissions and that prior efforts have had little effect.
+
+
+# Assumptions/Comments
+
+- A better method for Intervention Analysis could've been applied to compare the time series before and after the Kyoto Protocol adoption
+
+- The exact GHG emissions used was total_ghg_emissions_including_land_use_change_and_forestry_mt_co_e as this included all emissions contributing to climate change
+
+- Better method for handling multiple hypothesis testing could've been applied. In this case, even if we did not account for it none of the results would've changed
+
+- For regulations per country, each regulation was counted equally and we did not take into account how one regulation has a larger impact than others in terms of what the regulation actually does
+
+- 80% top country ghg emissions chosen was a bit arbitrary 
+
+- Not all countries were admitted to the Kyoto Protocol at the same time at 2005. Since the data was not available for use we made the assumption that they all joined at 2005.
+
+
+# Suggestions for further work
+
+Acquire monthly data to give more data points
+
+View GHG emissions per capita instead. Population rises exponentially and has grown by a lot 6.5B in 2005 to 7.5B in 2019 so 1B change so of course we would expect that to cause greater emissions. We wouldn't be surprised to see that the emissions per capita actually were affected after the Kyoto Protocol in 2005.
+
+It would also be interesting to see the effects of regulations on a country and subsector view as we would expect certain industries to behave much more differently than others. The following plot shows for Canada the total GHG emissions per subsector and the points on the lines represent that a regulation was created on that year for that subsector. The second plot shows for Canada the energy subsector specifically along with actual names of regulations.
+
+```{r, warning=FALSE, message=FALSE}
+# TODO: Figure out way to cleanly store this as a tibble
+regulations <- read_csv('../data/law_search/data.csv') %>%
+  clean_names() %>%
+  rename(year = year_passed) %>%
+  mutate(categories = categories %>%
+           str_to_lower() %>%
+           str_replace_all('energy supply|energy demand', 'energy') %>%
+           str_replace_all('; ', ';') %>%
+           str_split(';')) %>%
+  mutate(categories = map(categories, unique))
+
+regulation_category_types <- regulations %>%
+  select(categories) %>%
+  unlist() %>%
+  str_trim() %>%
+  unique()
+
+# Data from Stats Can, most likely the best data for Canada GHG Emissions
+# TODO: find a way to replace mt_co2e in all column names
+canada_ghg_emissions <- read_csv('../data/GHG-emissions-sector-en.csv', skip=2) %>%
+  clean_names() %>%
+  filter(!str_detect(year, 'Note|Source|Available')) %>%
+  mutate(year = as.integer(year)) %>%
+  pivot_longer(cols=-year, names_to='category', values_to='mt_co2e')
+
+# NOTE: Oil and gas is equivalent to carbon pricing?
+canada_category_mappings <-
+  tribble(
+    ~canada_category, ~regulation_category,
+    'oil_and_gas_megatonnes_of_carbon_dioxide_equivalent', 'carbon pricing',
+    'transportation_megatonnes_of_carbon_dioxide_equivalent', 'transportation',
+    'buildings_megatonnes_of_carbon_dioxide_equivalent', 'buildings',
+    'electricity_megatonnes_of_carbon_dioxide_equivalent', 'energy',
+    'heavy_industry_megatonnes_of_carbon_dioxide_equivalent', 'industry',
+    'waste_and_others_megatonnes_of_carbon_dioxide_equivalent', 'waste'
+  )
+
+# Canada regulations and their corresponding mtco2 values for that given year
+canada_regulations <- regulations %>%
+  filter(country == 'Canada') %>%
+  unnest_longer(categories) %>%
+  left_join(canada_category_mappings, by=c('categories' = 'regulation_category')) %>%
+  left_join(canada_ghg_emissions, by=c('year' = 'year', 'canada_category' = 'category'))
+
+# Display time series of canada ghg emission per subsector, along with corresponding regulations
+p <- canada_ghg_emissions %>%
+  mutate(category = str_remove(category, '_megatonnes_of_carbon_dioxide_equivalent')) %>%
+  mutate(category = str_replace_all(category, '_', ' ')) %>%
+  ggplot(aes(x=year, y=mt_co2e)) +
+  geom_line(aes(colour=category)) +
+  geom_point(
+    data = canada_regulations,
+    aes(x = year, y = mt_co2e)
+  ) +
+  # geom_text_repel(
+  #   data = canada_regulations,
+  #   aes(x = year, y = mt_co2e, label = name),
+  #   size = 3
+  # ) +
+  labs(
+    title = 'Canada GHG emissions per subsector',
+    subtitle = 'Corresponding regulations created (black points)',
+    x = 'Year',
+    y = 'GHG emissions (megatonnes of CO2 equivalent)',
+    colour = 'Category'
+  ) +
+  theme_hc()
+ggplotly(p)
+```
+
+```{r, warning=FALSE, message=FALSE}
+canada_electricity_ghg <- canada_ghg_emissions %>%
+  filter(str_detect(category, 'electricity')) %>%
+  select(-category)
+
+# Plot ghg emission with regulation names
+canada_electricity_ghg %>%
+  ggplot(aes(x=year, y=mt_co2e)) +
+  geom_line() +
+  geom_point(
+    data = canada_regulations %>% filter(categories == 'energy'),
+    aes(x=year, y=mt_co2e)
+  ) +
+  geom_text_repel(
+    data = canada_regulations %>% filter(categories == 'energy'),
+    aes(x=year, y=mt_co2e, label=name)
+  ) +
+  labs(
+    title = 'Canada GHG emissions in the energy sector and corresponding regulations',
+    x = 'Year',
+    y = 'GHG emission (megatonnes of CO2 equivalent)'
+  ) +
+  theme_minimal()
+```
+
+
+
+# References
+
+[1] https://otexts.com/fpp2/regarima.html
+
+
+# Appendix: sessionInfo
+
+```{r}
+sessionInfo()
+```
+

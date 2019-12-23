@@ -1,0 +1,42 @@
+CAIT Climate Data Explorer		
+Last Update: 2 October, 2017
+		
+			
+------------------------------------------------------			
+Citation:
+CAIT Climate Data Explorer. 2017. Washington, DC: World Resources Institute. Available online at: http://cait.wri.org.  
+
+	
+-----------------------------------------------------			
+Reuse:	
+
+Except as noted below, all CAIT data carries a Creative Commons Attribution-NonCommercial 4.0 International license. This means CAIT data and analysis can be used in non-commercial applications, provided clear attribution to WRI/CAIT is given. For commercial/for-profit uses, please contact us via wcait@wri.org. Find more information on http://creativecommons.org/licenses/by-nc/4.0/ and http://www.wri.org/publications/permissions-licensing	
+
+Data for Land-Use and Forestry indicator are provided by the Food and Agriculture Organization of the United Nations (FAO). WRI has been granted a non-exclusive, non-transferrable right to publish these data. Therefore, if users wish to republish this dataset in whole or in part, they should contact FAO directly at copyright@fao.org		
+
+Please Note: CAIT data are derived from several sources. Any use of the Land-Use Change and Forestry or Agriculture indicator should be cited as FAO 2016, FAOSTAT Emissions Database. Any use of CO2 emissions from fuel combustion data should be cited as CO2 Emissions from Fuel Combustion, ©OECD/IEA, 2016.
+
+Additionally to citing CAIT please consider citing the data sources that CAIT is using.		
+			
+-----------------------------------------------------
+Data sources:
+
+Carbon Dioxide Information Analysis Center
+	Boden, T.A., G. Marland, and R.J. Andres. 2017. Global, Regional, and National Fossil-Fuel CO2 Emissions. Carbon Dioxide Information Analysis Center, Oak Ridge National Laboratory, U.S. Department of Energy, Oak Ridge, Tenn., U.S.A. doi 10.3334/CDIAC/00001_V2017. Available online at:http://cdiac.ornl.gov/trends/emis/overview_2014.html. 
+
+Food and Agriculture Organization of the United Nations
+	Food and Agriculture Organization of the United Nations (FAO). 2016. FAOSTAT Emissions Database. Rome, Italy: FAO. Available at: http://www.fao.org/faostat/en/#data
+
+International Energy Agency
+	International Energy Agency (IEA).  2016. CO2 Emissions from Fuel Combustion (2016 edition).  Paris, France: OECD/IEA. Available online at:http://data.iea.org/ieastore/statslisting.asp.  © OECD/IEA, [2016].
+
+The World Bank
+	World Bank. 2017. World Development Indicators. Washington, DC. Available at: http://data.worldbank.org/. Accessed September 28th, 2017
+
+
+U.S. Energy Information Administration
+	U.S. Energy Information Administration (EIA).  2016. International Energy Statistics Washington, DC: U.S. Department of Energy. Available online at: http://www.eia.gov/beta/international/data/browser/#/?vs=INTL.44-1-AFRC-QBTU.A&vo=0&v=H&start=1980&end=2014
+
+U.S. Environmental Protection Agency
+	U.S. Environmental Protection Agency (EPA). 2012. “Global Non-CO2 GHG Emissions: 1990-2030.” Washington, DC: EPA. Available at: https://www.epa.gov/global-mitigation-non-co2-greenhouse-gases/non-co2-greenhouse-gases-international-emissions-and.
+
